@@ -3,32 +3,60 @@ set define off verify off feedback off
 whenever sqlerror exit sql.sqlcode rollback
 --------------------------------------------------------------------------------
 --
--- ORACLE Application Express (APEX) export file
+-- Oracle APEX export file
 --
--- You should run the script connected to SQL*Plus as the Oracle user
--- APEX_180200 or as the owner (parsing schema) of the application.
+-- You should run this script using a SQL client connected to the database as
+-- the owner (parsing schema) of the application or as a database user with the
+-- APEX_ADMINISTRATOR_ROLE role.
+--
+-- This export file has been automatically generated. Modifying this file is not
+-- supported by Oracle and can lead to unexpected application and/or instance
+-- behavior now or in the future.
 --
 -- NOTE: Calls to apex_application_install override the defaults below.
 --
 --------------------------------------------------------------------------------
 begin
-wwv_flow_api.import_begin (
- p_version_yyyy_mm_dd=>'2018.05.24'
-,p_release=>'18.2.0.00.12'
-,p_default_workspace_id=>13095209289114691
-,p_default_application_id=>168
-,p_default_owner=>'FX_WS_001'
+wwv_flow_imp.import_begin (
+ p_version_yyyy_mm_dd=>'2024.11.30'
+,p_release=>'24.2.11'
+,p_default_workspace_id=>8205260902819239028
+,p_default_application_id=>158053
+,p_default_id_offset=>0
+,p_default_owner=>'LUFCMATTYLAD'
 );
+end;
+/
+ 
+prompt APPLICATION 158053 - Load
+--
+-- Application Export:
+--   Application:     158053
+--   Name:            Load
+--   Date and Time:   13:39 Monday January 12, 2026
+--   Exported By:     MATT@GIZMA.COM
+--   Flashback:       0
+--   Export Type:     Component Export
+--   Manifest
+--     PLUGIN: 127823905510244443729
+--   Manifest End
+--   Version:         24.2.11
+--   Instance ID:     63113759365424
+--
+
+begin
+  -- replace components
+  wwv_flow_imp.g_mode := 'REPLACE';
 end;
 /
 prompt --application/shared_components/plugins/process_type/com_stefandobre_load_json_object
 begin
-wwv_flow_api.create_plugin(
- p_id=>wwv_flow_api.id(64345899226424172)
+wwv_flow_imp_shared.create_plugin(
+ p_id=>wwv_flow_imp.id(127823905510244443729)
 ,p_plugin_type=>'PROCESS TYPE'
 ,p_name=>'COM.STEFANDOBRE.LOAD_JSON_OBJECT'
 ,p_display_name=>'Load JSON Object'
-,p_supported_ui_types=>'DESKTOP:JQM_SMARTPHONE'
+,p_supported_component_types=>'APEX_APPLICATION_PAGE_PROC'
 ,p_plsql_code=>wwv_flow_string.join(wwv_flow_t_varchar2(
 '/*------------------------------------------------------------------------------',
 ' * Author       Stefan Dobre',
@@ -42,7 +70,8 @@ wwv_flow_api.create_plugin(
 ' *------------------------------------------------------------------------------',
 ' * Modification History',
 ' *',
-' * 24.04.2019   v1.0 initial release',
+' * 24.04.2019  SD v1.0     initial release',
+' * 12.01.2026  MM v24.2.1  APEX 24.2 compatibility - use CLOB output instead of HTP buffer',
 ' */-----------------------------------------------------------------------------',
 '',
 'function execute',
@@ -67,6 +96,8 @@ wwv_flow_api.create_plugin(
 '    l_js_literal_with_window  varchar2(4000) := apex_escape.js_literal(''window.'' || l_javascript_variable, null);',
 '    ',
 '    l_clob                    clob;',
+'    l_json_clob               clob;',
+'    l_cursor                  sys_refcursor;',
 '    ',
 '    /* unfortunately htp.p can only handle varchars',
 '     * this wrapper cuts a clob into 4000 byte chuncks and prints them one after the other',
@@ -115,11 +146,20 @@ wwv_flow_api.create_plugin(
 '    --depending on the source, the actual json, not escaped will be htp.p''ed',
 '    case l_source',
 '        when ''sql'' then',
-'            /* in case of a simple sql statement we can use this internal function',
-'             * it is undocumented but has been here forever it does the job',
-'             * note that values over > 4000 characters will be cut off at 4000',
+'            /* For SQL, we need to use APEX_JSON with CLOB output instead of apex_util.json_from_sql',
+'             * which writes directly to HTP and causes issues in APEX 24.2',
+'             * apex_json.write handles the cursor fetch and close automatically',
 '             */',
-'            apex_util.json_from_sql(l_sql);',
+'            apex_json.initialize_clob_output(p_indent => 0);',
+'            ',
+'            open l_cursor for l_sql;',
+'            apex_json.write(l_cursor);  -- This fetches and closes the cursor',
+'            ',
+'            l_json_clob := apex_json.get_clob_output;',
+'            apex_json.free_output;',
+'            ',
+'            htp_p_clob(l_json_clob);',
+'            ',
 '        when ''jsonsql'' then',
 '            /* if the source is set to ''SQL Query Returning JSON Object''',
 '             * we expect a query to return exactly 1 column with 1 row',
@@ -127,13 +167,20 @@ wwv_flow_api.create_plugin(
 '             */',
 '            execute immediate l_json_sql into l_clob;',
 '            htp_p_clob(l_clob);',
+'            ',
 '        when ''plsql'' then',
 '            /* in case of PL/SQL, the developer is expected to use ',
 '             * apex_json.open_object/ write, etc',
-'             * By default, these calls already print to the http buffer',
+'             * Instead of writing to HTP, write to CLOB output',
 '             */',
-'            apex_json.initialize_output(p_http_header => false);',
+'            apex_json.initialize_clob_output(p_indent => 0);',
 '            execute immediate ''begin '' || l_plsql_json || '' end;'';',
+'            ',
+'            l_json_clob := apex_json.get_clob_output;',
+'            apex_json.free_output;',
+'            ',
+'            htp_p_clob(l_json_clob);',
+'            ',
 '        when ''static'' then',
 '            /* The developer can also provide a JSON as plain text',
 '             */',
@@ -149,17 +196,20 @@ wwv_flow_api.create_plugin(
 '    htp.p(''</script>'');',
 '',
 '    return l_exec_result;',
-'end;'))
-,p_api_version=>2
+'end;',
+''))
+,p_api_version=>1
 ,p_execution_function=>'execute'
 ,p_substitute_attributes=>true
+,p_version_scn=>15694693650406
 ,p_subscribe_plugin_settings=>true
 ,p_help_text=>'<p>Loads a JSON Object into the page already at render time.</p>'
-,p_version_identifier=>'1.0'
+,p_version_identifier=>'24.2.1'
+,p_about_url=>'https://github.com/stefandobre/Load-JSON-Object'
 );
-wwv_flow_api.create_plugin_attribute(
- p_id=>wwv_flow_api.id(64349250686455439)
-,p_plugin_id=>wwv_flow_api.id(64345899226424172)
+wwv_flow_imp_shared.create_plugin_attribute(
+ p_id=>wwv_flow_imp.id(127823908861704474996)
+,p_plugin_id=>wwv_flow_imp.id(127823905510244443729)
 ,p_attribute_scope=>'COMPONENT'
 ,p_attribute_sequence=>1
 ,p_display_sequence=>10
@@ -171,17 +221,17 @@ wwv_flow_api.create_plugin_attribute(
 ,p_lov_type=>'STATIC'
 ,p_help_text=>'<p>Specify the source of the JSON Object</p>'
 );
-wwv_flow_api.create_plugin_attr_value(
- p_id=>wwv_flow_api.id(64349809489456871)
-,p_plugin_attribute_id=>wwv_flow_api.id(64349250686455439)
+wwv_flow_imp_shared.create_plugin_attr_value(
+ p_id=>wwv_flow_imp.id(127823909420507476428)
+,p_plugin_attribute_id=>wwv_flow_imp.id(127823908861704474996)
 ,p_display_sequence=>10
 ,p_display_value=>'SQL Query'
 ,p_return_value=>'sql'
 ,p_help_text=>'<p>A regular SQL Query. Note that values over 4000 characters in length will be cut off at 4000.</p>'
 );
-wwv_flow_api.create_plugin_attr_value(
- p_id=>wwv_flow_api.id(41113772182824672)
-,p_plugin_attribute_id=>wwv_flow_api.id(64349250686455439)
+wwv_flow_imp_shared.create_plugin_attr_value(
+ p_id=>wwv_flow_imp.id(127800673383200844229)
+,p_plugin_attribute_id=>wwv_flow_imp.id(127823908861704474996)
 ,p_display_sequence=>20
 ,p_display_value=>'SQL Query Returning JSON Object'
 ,p_return_value=>'jsonsql'
@@ -189,9 +239,9 @@ wwv_flow_api.create_plugin_attr_value(
 '<p>A SQL Query which returns a JSON Object. It can either be fetched from the database, or be built dynamically.</p>',
 '<p>The query must return exactly 1 column and 1 one row.</p>'))
 );
-wwv_flow_api.create_plugin_attr_value(
- p_id=>wwv_flow_api.id(64350241599459814)
-,p_plugin_attribute_id=>wwv_flow_api.id(64349250686455439)
+wwv_flow_imp_shared.create_plugin_attr_value(
+ p_id=>wwv_flow_imp.id(127823909852617479371)
+,p_plugin_attribute_id=>wwv_flow_imp.id(127823908861704474996)
 ,p_display_sequence=>30
 ,p_display_value=>'PL/SQL Procedure'
 ,p_return_value=>'plsql'
@@ -199,17 +249,17 @@ wwv_flow_api.create_plugin_attr_value(
 '<p>Choose "PL/SQL Procedure" if you wish to build the JSON Object in a procedural manner.</p>',
 '<p>You can use the <code>apex_json</code> package to build the object.</p>'))
 );
-wwv_flow_api.create_plugin_attr_value(
- p_id=>wwv_flow_api.id(64352350327617810)
-,p_plugin_attribute_id=>wwv_flow_api.id(64349250686455439)
+wwv_flow_imp_shared.create_plugin_attr_value(
+ p_id=>wwv_flow_imp.id(127823911961345637367)
+,p_plugin_attribute_id=>wwv_flow_imp.id(127823908861704474996)
 ,p_display_sequence=>40
 ,p_display_value=>'Static'
 ,p_return_value=>'static'
 ,p_help_text=>'<p>A JSON Object as plain text.</p>'
 );
-wwv_flow_api.create_plugin_attribute(
- p_id=>wwv_flow_api.id(64350625354471980)
-,p_plugin_id=>wwv_flow_api.id(64345899226424172)
+wwv_flow_imp_shared.create_plugin_attribute(
+ p_id=>wwv_flow_imp.id(127823910236372491537)
+,p_plugin_id=>wwv_flow_imp.id(127823905510244443729)
 ,p_attribute_scope=>'COMPONENT'
 ,p_attribute_sequence=>2
 ,p_display_sequence=>20
@@ -217,7 +267,7 @@ wwv_flow_api.create_plugin_attribute(
 ,p_attribute_type=>'SQL'
 ,p_is_required=>true
 ,p_is_translatable=>false
-,p_depending_on_attribute_id=>wwv_flow_api.id(64349250686455439)
+,p_depending_on_attribute_id=>wwv_flow_imp.id(127823908861704474996)
 ,p_depending_on_has_to_exist=>true
 ,p_depending_on_condition_type=>'EQUALS'
 ,p_depending_on_expression=>'sql'
@@ -246,9 +296,9 @@ wwv_flow_api.create_plugin_attribute(
 '<li>Values over 4000 characters in length will get cut off at 4000. Use the aforementioned options to circumvent this.</li>',
 '</ul>'))
 );
-wwv_flow_api.create_plugin_attribute(
- p_id=>wwv_flow_api.id(41114188180836239)
-,p_plugin_id=>wwv_flow_api.id(64345899226424172)
+wwv_flow_imp_shared.create_plugin_attribute(
+ p_id=>wwv_flow_imp.id(127800673799198855796)
+,p_plugin_id=>wwv_flow_imp.id(127823905510244443729)
 ,p_attribute_scope=>'COMPONENT'
 ,p_attribute_sequence=>3
 ,p_display_sequence=>30
@@ -258,7 +308,7 @@ wwv_flow_api.create_plugin_attribute(
 ,p_sql_min_column_count=>1
 ,p_sql_max_column_count=>1
 ,p_is_translatable=>false
-,p_depending_on_attribute_id=>wwv_flow_api.id(64349250686455439)
+,p_depending_on_attribute_id=>wwv_flow_imp.id(127823908861704474996)
 ,p_depending_on_has_to_exist=>true
 ,p_depending_on_condition_type=>'EQUALS'
 ,p_depending_on_expression=>'jsonsql'
@@ -366,9 +416,9 @@ wwv_flow_api.create_plugin_attribute(
 '<p>The JSON Object can either be fetched from a JSON column in a table, or dynamically created using <code>json_object</code>, <code>json_array</code>, etc function calls.</p>',
 '<p>This method lets you have much more control over the format of the object, and can handle CLOBs.</p>'))
 );
-wwv_flow_api.create_plugin_attribute(
- p_id=>wwv_flow_api.id(64351196778475031)
-,p_plugin_id=>wwv_flow_api.id(64345899226424172)
+wwv_flow_imp_shared.create_plugin_attribute(
+ p_id=>wwv_flow_imp.id(127823910807796494588)
+,p_plugin_id=>wwv_flow_imp.id(127823905510244443729)
 ,p_attribute_scope=>'COMPONENT'
 ,p_attribute_sequence=>4
 ,p_display_sequence=>40
@@ -376,7 +426,7 @@ wwv_flow_api.create_plugin_attribute(
 ,p_attribute_type=>'PLSQL'
 ,p_is_required=>true
 ,p_is_translatable=>false
-,p_depending_on_attribute_id=>wwv_flow_api.id(64349250686455439)
+,p_depending_on_attribute_id=>wwv_flow_imp.id(127823908861704474996)
 ,p_depending_on_has_to_exist=>true
 ,p_depending_on_condition_type=>'EQUALS'
 ,p_depending_on_expression=>'plsql'
@@ -439,9 +489,9 @@ wwv_flow_api.create_plugin_attribute(
 '<p>Calls to <code>APEX_JSON</code> procedures internally output to the http buffer, so there is nothing to manually print or return.</p>',
 '<p>You can use this method if the JSON Object is impossible or too complicated to create in pure SQL.</p>'))
 );
-wwv_flow_api.create_plugin_attribute(
- p_id=>wwv_flow_api.id(64352755679624701)
-,p_plugin_id=>wwv_flow_api.id(64345899226424172)
+wwv_flow_imp_shared.create_plugin_attribute(
+ p_id=>wwv_flow_imp.id(127823912366697644258)
+,p_plugin_id=>wwv_flow_imp.id(127823905510244443729)
 ,p_attribute_scope=>'COMPONENT'
 ,p_attribute_sequence=>5
 ,p_display_sequence=>50
@@ -449,7 +499,7 @@ wwv_flow_api.create_plugin_attribute(
 ,p_attribute_type=>'TEXTAREA'
 ,p_is_required=>true
 ,p_is_translatable=>false
-,p_depending_on_attribute_id=>wwv_flow_api.id(64349250686455439)
+,p_depending_on_attribute_id=>wwv_flow_imp.id(127823908861704474996)
 ,p_depending_on_has_to_exist=>true
 ,p_depending_on_condition_type=>'EQUALS'
 ,p_depending_on_expression=>'static'
@@ -459,9 +509,9 @@ wwv_flow_api.create_plugin_attribute(
 '</pre>'))
 ,p_help_text=>'<p>Provide the JSON Object as plain text, but still well formatted.</p>'
 );
-wwv_flow_api.create_plugin_attribute(
- p_id=>wwv_flow_api.id(41102596497478415)
-,p_plugin_id=>wwv_flow_api.id(64345899226424172)
+wwv_flow_imp_shared.create_plugin_attribute(
+ p_id=>wwv_flow_imp.id(127800662207515497972)
+,p_plugin_id=>wwv_flow_imp.id(127823905510244443729)
 ,p_attribute_scope=>'COMPONENT'
 ,p_attribute_sequence=>6
 ,p_display_sequence=>60
@@ -476,8 +526,10 @@ wwv_flow_api.create_plugin_attribute(
 );
 end;
 /
+prompt --application/end_environment
 begin
-wwv_flow_api.import_end(p_auto_install_sup_obj => nvl(wwv_flow_application_install.get_auto_install_sup_obj, false), p_is_component_import => true);
+wwv_flow_imp.import_end(p_auto_install_sup_obj => nvl(wwv_flow_application_install.get_auto_install_sup_obj, false)
+);
 commit;
 end;
 /

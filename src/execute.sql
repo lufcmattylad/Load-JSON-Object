@@ -10,7 +10,8 @@
  *------------------------------------------------------------------------------
  * Modification History
  *
- * 24.04.2019   v1.0 initial release
+ * 24.04.2019  SD v1.0     initial release
+ * 12.01.2026  MM v24.2.1  APEX 24.2 compatibility - use CLOB output instead of HTP buffer
  */-----------------------------------------------------------------------------
 
 function execute
@@ -35,6 +36,8 @@ as
     l_js_literal_with_window  varchar2(4000) := apex_escape.js_literal('window.' || l_javascript_variable, null);
     
     l_clob                    clob;
+    l_json_clob               clob;
+    l_cursor                  sys_refcursor;
     
     /* unfortunately htp.p can only handle varchars
      * this wrapper cuts a clob into 4000 byte chuncks and prints them one after the other
@@ -83,11 +86,20 @@ begin
     --depending on the source, the actual json, not escaped will be htp.p'ed
     case l_source
         when 'sql' then
-            /* in case of a simple sql statement we can use this internal function
-             * it is undocumented but has been here forever it does the job
-             * note that values over > 4000 characters will be cut off at 4000
+            /* For SQL, we need to use APEX_JSON with CLOB output instead of apex_util.json_from_sql
+             * which writes directly to HTP and causes issues in APEX 24.2
+             * apex_json.write handles the cursor fetch and close automatically
              */
-            apex_util.json_from_sql(l_sql);
+            apex_json.initialize_clob_output(p_indent => 0);
+            
+            open l_cursor for l_sql;
+            apex_json.write(l_cursor);  -- This fetches and closes the cursor
+            
+            l_json_clob := apex_json.get_clob_output;
+            apex_json.free_output;
+            
+            htp_p_clob(l_json_clob);
+            
         when 'jsonsql' then
             /* if the source is set to 'SQL Query Returning JSON Object'
              * we expect a query to return exactly 1 column with 1 row
@@ -95,13 +107,20 @@ begin
              */
             execute immediate l_json_sql into l_clob;
             htp_p_clob(l_clob);
+            
         when 'plsql' then
             /* in case of PL/SQL, the developer is expected to use 
              * apex_json.open_object/ write, etc
-             * By default, these calls already print to the http buffer
+             * Instead of writing to HTP, write to CLOB output
              */
-            apex_json.initialize_output(p_http_header => false);
+            apex_json.initialize_clob_output(p_indent => 0);
             execute immediate 'begin ' || l_plsql_json || ' end;';
+            
+            l_json_clob := apex_json.get_clob_output;
+            apex_json.free_output;
+            
+            htp_p_clob(l_json_clob);
+            
         when 'static' then
             /* The developer can also provide a JSON as plain text
              */
