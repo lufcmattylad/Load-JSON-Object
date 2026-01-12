@@ -5,5 +5,5 @@ This is a small APEX Plugin which adds a JSON Object into a JavaScript variable 
 You can see a demo [here](https://apex.oracle.com/pls/apex/f?p=60314:2).
 
 ### Releases
-1.0    - First release
-24.2.1 - APEX 24.2 compatibility - use CLOB output instead of HTP buffer
+ 1.0    - First release  
+ 24.2.1 - APEX 24.2 compatibility - use CLOB output instead of HTP buffer
