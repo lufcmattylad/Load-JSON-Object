@@ -12,6 +12,8 @@
  *
  * 24.04.2019  SD v1.0     initial release
  * 12.01.2026  MM v24.2.1  APEX 24.2 compatibility - use CLOB output instead of HTP buffer
+                           Support for APEX Binds
+                           Extend/merge properties into an existing object rather than replacing it completely.
  */-----------------------------------------------------------------------------
 
 function execute
@@ -39,21 +41,6 @@ as
     l_json_clob               clob;
     l_cursor                  sys_refcursor;
     
-    /* unfortunately htp.p can only handle varchars
-     * this wrapper cuts a clob into 4000 byte chuncks and prints them one after the other
-     */
-    procedure htp_p_clob
-        ( p_content clob
-        )
-    as
-        l_offset number default 1;
-    begin
-         loop
-           exit when l_offset > dbms_lob.getlength(p_content);
-           htp.prn(dbms_lob.substr( p_content, 4000, l_offset ));
-           l_offset := l_offset + 4000;
-         end loop;
-    end;
 begin
 
     apex_plugin_util.debug_process
@@ -79,56 +66,93 @@ begin
     
     --creating the (possibly nested) object and sticking it onto the window object
     htp.p('createNestedObject(window, ' || l_js_literal || ');');
-    
-    --window.newObject = 
-    htp.prn(l_js_literal_with_window || ' = ');
+
+    -- New behavior: merge properties using Object.assign
+    -- Initialize to empty object if undefined, then merge
+    htp.prn(l_js_literal_with_window || ' = ' || l_js_literal_with_window || ' || {}; ');
+    htp.prn('Object.assign(' || l_js_literal_with_window || ', ');
 
     --depending on the source, the actual json, not escaped will be htp.p'ed
     case l_source
         when 'sql' then
-            /* For SQL, we need to use APEX_JSON with CLOB output instead of apex_util.json_from_sql
-             * which writes directly to HTP and causes issues in APEX 24.2
-             * apex_json.write handles the cursor fetch and close automatically
-             */
-            apex_json.initialize_clob_output(p_indent => 0);
-            
-            open l_cursor for l_sql;
-            apex_json.write(l_cursor);  -- This fetches and closes the cursor
-            
-            l_json_clob := apex_json.get_clob_output;
-            apex_json.free_output;
-            
-            htp_p_clob(l_json_clob);
-            
+            /* Use APEX_EXEC to support APEX bind variables
+            * APEX_EXEC automatically binds page and application items
+            */
+            declare
+                l_context apex_exec.t_context;
+            begin
+                -- Open query context with automatic APEX item binding
+                l_context := apex_exec.open_query_context(
+                    p_location          => apex_exec.c_location_local_db,
+                    p_sql_query         => l_sql,
+                    p_auto_bind_items   => true
+                );
+                
+                -- Initialize JSON output
+                apex_json.initialize_clob_output(p_indent => 0);
+                
+                -- Use write_context (not write) for apex_exec context
+                apex_json.open_array;
+                apex_json.write_context(l_context);
+                apex_json.close_array;
+                
+                -- Close the context
+                apex_exec.close(l_context);
+                
+                -- Get the JSON output
+                l_json_clob := apex_json.get_clob_output;
+                apex_json.free_output;
+                
+                apex_util.prn( p_clob => l_json_clob, p_escape => false );
+                
+            exception
+                when others then
+                    apex_exec.close(l_context);
+                    apex_json.free_output;
+                    raise;
+            end;
+
         when 'jsonsql' then
-            /* if the source is set to 'SQL Query Returning JSON Object'
-             * we expect a query to return exactly 1 column with 1 row
-             * ideally using something like select json_object() from ...
-             */
-            execute immediate l_json_sql into l_clob;
-            htp_p_clob(l_clob);
+            declare
+                l_column_value_list apex_plugin_util.t_column_value_list;
+            begin
+                l_column_value_list := apex_plugin_util.get_data(
+                    p_sql_statement  => l_json_sql,
+                    p_min_columns    => 1,
+                    p_max_columns    => 1,
+                    p_component_name => p_process.name
+                );
+                
+                -- Extract value from first column, first row
+                -- Works for both VARCHAR2 and CLOB sources
+                if l_column_value_list.exists(1) and l_column_value_list(1).count > 0 then
+                    l_clob := l_column_value_list(1)(1);
+                    apex_util.prn( p_clob => l_clob, p_escape => false );
+                end if;
+            end;
             
         when 'plsql' then
             /* in case of PL/SQL, the developer is expected to use 
              * apex_json.open_object/ write, etc
              * Instead of writing to HTP, write to CLOB output
+             * apex_plugin_util.execute_plsql_code handles APEX bind variables
              */
             apex_json.initialize_clob_output(p_indent => 0);
-            execute immediate 'begin ' || l_plsql_json || ' end;';
+            apex_plugin_util.execute_plsql_code( p_plsql_code => l_plsql_json );
             
             l_json_clob := apex_json.get_clob_output;
             apex_json.free_output;
             
-            htp_p_clob(l_json_clob);
+            apex_util.prn( p_clob => l_json_clob, p_escape => false );
             
         when 'static' then
             /* The developer can also provide a JSON as plain text
              */
-            htp.prn(l_static_json);
+            apex_util.prn( p_clob => l_static_json, p_escape => false );
     end case;
     
-    --finishing off the assignment statement
-    htp.p(';');
+    -- Close the Object.assign call
+    htp.p(');'); -- Close Object.assign
     
     --closing the self calling function
     htp.p('})();');
